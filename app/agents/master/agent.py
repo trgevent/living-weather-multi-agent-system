@@ -53,6 +53,7 @@ Kaynak: Living Weather mimarisi (kullanıcı tasarımı), Day 5 whitepaper
 import sys
 import uuid
 from pathlib import Path
+from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.core.models import WeatherContext, DataSourceStatus
@@ -61,6 +62,7 @@ from app.agents.llm_agent.agent import LLMAgent
 from app.agents.as_agent.agent import ASAgent
 from app.agents.fl_agent.agent import FLAgent
 from app.agents.ri_agent.agent import RIAgent
+from app.agents.pa_agent.agent import PAAgent
 
 
 # Basit bir konum->koordinat tablosu (gerçek production'da bir
@@ -91,6 +93,10 @@ class MasterAgent:
         # AYNI devre kesici (Redis) state'ini kullanır, ayrı bir devre
         # kesici "kör nokta" oluşmaz.
         self.ri_agent = RIAgent(di_agent=self.di_agent)
+        # PA-Agent (ESNEK AJAN, Gün 5'te eklendi): bağımsız, dış API/LLM
+        # çağrısı gerektirmiyor, sadece DI-Agent'ın çıktısını işliyor -
+        # bu yüzden ayrı bir dependency injection'a gerek yok.
+        self.pa_agent = PAAgent()
 
     def process_request(self, location_query: str) -> WeatherContext:
         """
@@ -167,6 +173,30 @@ class MasterAgent:
             destination=destination_query, destination_coords=destination_coords,
         )
         return origin_coords, destination_coords, route_response
+
+    def process_advisory_request(self, location_query: str, user_name: Optional[str] = None):
+        """
+        ESNEK AJAN GİRİŞ NOKTASI (Gün 5'te eklendi): PA-Agent'ı çağırır.
+        process_request()'TEN AYRI - mevcut akışa hiç dokunmadan eklendi,
+        çünkü PA-Agent da çekirdek 5'in parçası DEĞİL.
+
+        Akış: önce process_request() ile normal hava verisi akışı
+        (DI-Agent → gerekirse LLM-Agent → AS-Agent) çalıştırılır - bu
+        sayede PA-Agent, AS-Agent'ın ZATEN ürettiği WeatherContext'i
+        yeniden kullanır (DRY, ayrı bir DI-Agent çağrısı tekrar
+        yapılmaz). Sonra context.current_reading, PA-Agent'a verilir.
+
+        Döner: (WeatherContext, AgentResponse) ya da konum tanınmazsa
+        (WeatherContext, None).
+        """
+        context = self.process_request(location_query)
+
+        if context.current_reading is None:
+            return context, None
+
+        advisory_response = self.pa_agent.advise(context.current_reading, user_name=user_name)
+        context.agent_trace.append(advisory_response)
+        return context, advisory_response
 
     @staticmethod
     def _resolve_coordinates(location_query: str):
@@ -246,3 +276,20 @@ if __name__ == "__main__":
         print(f"Genel güven: {route_response.confidence_score:.2f}")
         print(">>> RI-Agent, Master Agent üzerinden çağrıldı, aynı DI-Agent")
         print(">>> (ve aynı Redis devre kesici state'i) paylaşıldı.")
+
+    print("\n" + "=" * 60)
+    print("=== SENARYO 5: PA-Agent entegrasyonu - İzmir için kişisel öneri ===")
+    print("NOT: TEMİZ bir MasterAgent örneği kullanılıyor.\n")
+    fresh_master2 = MasterAgent()
+    context5, advisory_response = fresh_master2.process_advisory_request("İzmir", user_name="Levent")
+    if advisory_response is None:
+        print("Konum tanınmadı, öneri üretilemedi.")
+    else:
+        print(f"Kıyafet önerisi: {advisory_response.payload['clothing_advice']}")
+        print(f"Sağlık önerisi: {advisory_response.payload['health_advice']}")
+        print(f"Aktivite önerisi: {advisory_response.payload['activity_advice']}")
+        print(f"Ajan izleri: {[t.agent_name for t in context5.agent_trace]}")
+        print(">>> PA-Agent, Master Agent üzerinden çağrıldı, process_request()'in")
+        print(">>> ZATEN ürettiği WeatherContext'i yeniden kullandı (ayrı bir")
+        print(">>> DI-Agent çağrısı tekrar yapılmadı - context.agent_trace'te")
+        print(">>> DI-Agent/AS-Agent + PA-Agent'ın hepsi görünmeli).")

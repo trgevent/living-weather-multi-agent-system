@@ -46,6 +46,7 @@ Kaynak: Living Weather mimarisi (kullanıcı tasarımı), Day 5 whitepaper
 
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -102,6 +103,25 @@ class RouteResponse(BaseModel):
     judge_passed: bool
     judge_reason: str
     confidence_score: float
+
+
+class AdvisoryRequest(BaseModel):
+    """POST /advisory için gövde (body) şeması."""
+    location: str
+    user_name: Optional[str] = None
+
+
+class AdvisoryResponse(BaseModel):
+    """
+    POST /advisory için yanıt şeması. PA-Agent'ın AgentResponse.payload'ı
+    AÇIK bir şema olarak tanımlanıyor (RouteResponse ile AYNI desen).
+    """
+    clothing_advice: str
+    health_advice: str
+    activity_advice: str
+    based_on_source: str
+    based_on_confidence: float
+    note: Optional[str] = None
 
 
 # ----------------------------------------------------------------------
@@ -196,6 +216,49 @@ def get_route(request: RouteRequest) -> RouteResponse:
         judge_passed=payload["judge_passed"],
         judge_reason=payload["judge_reason"],
         confidence_score=route_response.confidence_score,
+    )
+
+
+@app.post("/advisory", response_model=AdvisoryResponse)
+def get_advisory(request: AdvisoryRequest) -> AdvisoryResponse:
+    """
+    ESNEK AJAN ENDPOINT'İ (Gün 5'te eklendi): PA-Agent üzerinden,
+    kişiselleştirilmiş kıyafet/sağlık/aktivite önerisi üretir.
+
+    Akış (agent_master.py'deki process_advisory_request ile birebir aynı):
+      1. process_request() çağrılır (DI-Agent → gerekirse LLM-Agent → AS-Agent)
+      2. PA-Agent, ZATEN üretilmiş WeatherContext'in current_reading'ini
+         kullanır - ayrı bir DI-Agent çağrısı YAPILMAZ
+      3. context_resolver.py ile kişiselleştirilmiş ([[GREETING]] vb.)
+         öneri metinleri üretilir
+
+    NOT: Düşük güvenilirlikli veri (örn. LLM-Agent fallback'i) için
+    AS-Agent'taki gibi bir "otomatik aksiyon engelleme" YOKTUR - PA-Agent
+    önerileri bir güvenlik aksiyonu değil, bir konfor önerisi olduğu için
+    her zaman üretilir, sadece güvenilirlik notu (varsa) eklenir.
+    """
+    context, advisory_response = master_agent.process_advisory_request(
+        request.location, user_name=request.user_name
+    )
+
+    if advisory_response is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Konum tanınmadı: '{request.location}'. "
+                f"Şu an bilinen şehirler: izmir, istanbul, ankara, "
+                f"antalya, bodrum."
+            ),
+        )
+
+    payload = advisory_response.payload
+    return AdvisoryResponse(
+        clothing_advice=payload["clothing_advice"],
+        health_advice=payload["health_advice"],
+        activity_advice=payload["activity_advice"],
+        based_on_source=payload["based_on_source"],
+        based_on_confidence=payload["based_on_confidence"],
+        note=advisory_response.error_message,
     )
 
 
