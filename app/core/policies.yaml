@@ -1,0 +1,62 @@
+# policies.yaml
+# ==============
+# Day 5 whitepaper pattern: "Policy Server - Structural Gating"
+#
+# Bu dosya, hangi rolün hangi tool'u hangi ortamda (environment)
+# kullanabileceğini tanımlar. Bu "deterministik" kontroldür -
+# LLM'e sormaya gerek yok, hızlı bir YAML/dict lookup.
+#
+# ATLAS (aile asistanı) için örnek senaryo:
+#   - "viewer" rolü (örn: öğrenci hesabı) sadece kendi notlarını
+#     okuyabilir, başka bir öğrencinin verisini değiştiremez.
+#   - "admin" rolü (örn: ebeveyn hesabı) Gmail bildirimi gönderebilir,
+#     ama "localhost" / test ortamında bu kapalı tutulur (yanlışlıkla
+#     gerçek bir email gitmesin diye).
+#
+# LIVING WEATHER için örnek senaryo:
+#   - AS-Agent (Alert & Safety) "send_alert" tool'unu kullanabilir,
+#     ama "FL-Agent" (sadece öğrenme/feedback) bunu kullanamaz.
+
+environments:
+  localhost:
+    # Yerel test ortamında gerçek email/SMS gönderimini engelle
+    blocked_tools:
+      - send_email
+      - send_sms
+      - send_severe_weather_alert  # Living Weather: test'te gerçek uyarı gitmesin
+  production:
+    # Prod'da hiçbir şey engellenmiyor ama istersen buraya da
+    # kısıtlama ekleyebilirsin (örn: belirli saatlerde bildirim yok)
+    blocked_tools: []
+
+roles:
+  viewer:
+    # Sadece okuma yetkisi olan roller (örn: öğrenci hesabı)
+    allowed_tools:
+      - list_files
+      - read_file
+      - get_exam_results
+      - get_weather_forecast
+
+  editor:
+    # Veri güncelleyebilen ama bildirim gönderemeyen roller
+    allowed_tools:
+      - list_files
+      - read_file
+      - update_task_status
+      - get_exam_results
+      - get_weather_forecast
+
+  admin:
+    # Tam yetki - ebeveyn hesabı veya sistem yöneticisi
+    # "*" tüm tool'lara izin verir
+    allowed_tools:
+      - "*"
+
+  as_agent:
+    # Living Weather: AS-Agent (Alert & Safety) için özel rol.
+    # Bu ajan sadece uyarı göndermekle ilgilenir, başka bir şey yapamaz
+    # (en az ayrıcalık ilkesi / principle of least privilege).
+    allowed_tools:
+      - send_severe_weather_alert
+      - get_weather_forecast

@@ -1,0 +1,67 @@
+# docker-compose.yml
+# ====================
+# Living Weather - Redis + PostgreSQL container tanımları
+#
+# NEDEN BU İKİ SERVİS?
+#   - Redis: DI-Agent'ın devre kesici (circuit breaker) durumunu
+#     tutar. STATUS.md'deki bilinen risk şuydu: "FastAPI birden
+#     fazla worker ile çalışırsa, her worker kendi devre durumunu
+#     tutar (paylaşılmaz)". Redis, bu durumu TÜM worker'ların
+#     paylaşacağı tek bir merkezi yere taşır.
+#   - PostgreSQL: FL-Agent'ın FeedbackRecord geçmişini (tahmin vs
+#     gerçek karşılaştırmaları) kalıcı hale getirir. Şu ana kadar
+#     bu veri sadece bellek-içi (in-memory) bir Python listesindeydi
+#     - yani uygulama her yeniden başladığında SİLİNİYORDU.
+#
+# PORT NOTU:
+#   Bilgisayarında zaten başka projeler (trucklife, medtrade, atlas
+#   vb.) standart portları (5432, 5433, 6379) kullanıyor. Çakışma
+#   olmaması için Living Weather'a ÖZEL portlar seçildi:
+#     PostgreSQL: 5434  (host) -> 5432 (container içi, standart)
+#     Redis:      6380  (host) -> 6379 (container içi, standart)
+#   Yani "localhost:5434" ve "localhost:6380" ile bağlanacaksın,
+#   diğer projelerin container'larına hiç dokunmuyoruz.
+#
+# ÇALIŞTIRMA:
+#   cd C:\Users\levent.turgut\living-weather
+#   docker compose up -d
+#
+#   Durdurmak için: docker compose down
+#   (Veriyi de silmek istersen: docker compose down -v)
+
+services:
+  living-weather-postgres:
+    image: postgres:16-alpine
+    container_name: living-weather-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: living_weather
+      POSTGRES_PASSWORD: living_weather_dev_pw
+      POSTGRES_DB: living_weather
+    ports:
+      - "5434:5432"
+    volumes:
+      - living_weather_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U living_weather -d living_weather"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  living-weather-redis:
+    image: redis:7-alpine
+    container_name: living-weather-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - living_weather_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  living_weather_pg_data:
+  living_weather_redis_data:
