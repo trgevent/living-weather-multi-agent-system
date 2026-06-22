@@ -1,7 +1,7 @@
 # Living Weather: A Multi-Agent Weather System Built on Graceful Degradation
 Kaggle 5-Day AI Agents Intensive — Vibe Coding Capstone Project
 
-A 5-agent system that fetches real weather data, never goes silent when an API fails, refuses to send safety alerts based on unreliable data, and calibrates its own trustworthiness over time. Built entirely with local Python, FastAPI, Redis, and PostgreSQL — no cloud platform dependency.
+An 8-agent system that fetches real weather data, never goes silent when an API fails, refuses to send safety alerts based on unreliable data, and calibrates its own trustworthiness over time. Built entirely with local Python, FastAPI, Redis, and PostgreSQL — no cloud platform dependency.
 
 Full writeup (architecture, design decisions, evidence): [Kaggle Writeup — link to be added]
 Interactive demo (runs the core agents live, no Docker required): [Kaggle Notebook — living-weather-multi-agent-system]
