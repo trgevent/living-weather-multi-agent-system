@@ -63,6 +63,7 @@ from app.agents.as_agent.agent import ASAgent
 from app.agents.fl_agent.agent import FLAgent
 from app.agents.ri_agent.agent import RIAgent
 from app.agents.pa_agent.agent import PAAgent
+from app.agents.mc_agent.agent import MCAgent
 
 
 # Basit bir konum->koordinat tablosu (gerçek production'da bir
@@ -97,6 +98,14 @@ class MasterAgent:
         # çağrısı gerektirmiyor, sadece DI-Agent'ın çıktısını işliyor -
         # bu yüzden ayrı bir dependency injection'a gerek yok.
         self.pa_agent = PAAgent()
+        # MC-Agent (ESNEK AJAN, Gün 6'da eklendi - esnek 3'ün SONUNCUSU):
+        # RI-Agent'taki AYNI desen - aynı DIAgent örneğini paylaşır,
+        # ayrı bir devre kesici "kör nokta" oluşmaz. KNOWN_LOCATIONS
+        # tablosuna BAĞIMLI DEĞİL (bkz. CHAPTER_NOTES.md, "MC-Agent
+        # serbest koordinat çiftleriyle çalışır" kararı) - Master Agent
+        # üzerinden çağrıldığında konum adı çözümü için bu tabloyu
+        # kullanabilir, ama MC-Agent'ın KENDİSİ tabloyu hiç bilmez.
+        self.mc_agent = MCAgent(di_agent=self.di_agent)
 
     def process_request(self, location_query: str) -> WeatherContext:
         """
@@ -198,6 +207,38 @@ class MasterAgent:
         context.agent_trace.append(advisory_response)
         return context, advisory_response
 
+    def process_microclimate_request(self, point_a_query: str, point_b_query: str):
+        """
+        ESNEK AJAN GİRİŞ NOKTASI (Gün 6'da eklendi - esnek 3'ün
+        SONUNCUSU): MC-Agent'ı çağırır. process_request()'TEN AYRI -
+        mevcut akışa hiç dokunmadan eklendi, çünkü MC-Agent da çekirdek
+        5'in parçası DEĞİL.
+
+        NOT: Bu giriş noktası, Living Weather'ın KENDİ KNOWN_LOCATIONS
+        tablosuyla çalışan bir KOLAYLIK katmanıdır - _resolve_coordinates()
+        ile konum adını koordinata çevirir (RI-Agent'taki process_route_
+        request() ile AYNI desen). MC-Agent'ın KENDİSİ (mc_agent.agent.
+        MCAgent.compare_locations) bu tabloyu hiç bilmez, serbest
+        (latitude, longitude) çiftleri alır - bu yüzden ileride Atlas/
+        HeyGuide gibi başka projelerden çağrılırken bu metodun (ve
+        KNOWN_LOCATIONS tablosunun) ATLANIP doğrudan MCAgent.compare_
+        locations() çağrılması yeterlidir (bkz. CHAPTER_NOTES.md).
+
+        Döner: (point_a_coords, point_b_coords, AgentResponse) ya da
+        konumlardan biri tanınmazsa (None, None, None).
+        """
+        point_a_coords = self._resolve_coordinates(point_a_query)
+        point_b_coords = self._resolve_coordinates(point_b_query)
+
+        if point_a_coords is None or point_b_coords is None:
+            return None, None, None
+
+        comparison_response = self.mc_agent.compare_locations(
+            point_a_name=point_a_query, point_a_coords=point_a_coords,
+            point_b_name=point_b_query, point_b_coords=point_b_coords,
+        )
+        return point_a_coords, point_b_coords, comparison_response
+
     @staticmethod
     def _resolve_coordinates(location_query: str):
         """Basit konum -> koordinat çözümü (Türkçe normalize ile)."""
@@ -293,3 +334,20 @@ if __name__ == "__main__":
         print(">>> ZATEN ürettiği WeatherContext'i yeniden kullandı (ayrı bir")
         print(">>> DI-Agent çağrısı tekrar yapılmadı - context.agent_trace'te")
         print(">>> DI-Agent/AS-Agent + PA-Agent'ın hepsi görünmeli).")
+
+    print("\n" + "=" * 60)
+    print("=== SENARYO 6: MC-Agent entegrasyonu - İzmir vs Ankara mikro-iklim ===")
+    print("NOT: TEMİZ bir MasterAgent örneği kullanılıyor.\n")
+    fresh_master3 = MasterAgent()
+    pa_coords, pb_coords, comparison_response = fresh_master3.process_microclimate_request("İzmir", "Ankara")
+    if comparison_response is None:
+        print("Konumlardan biri tanınmadı.")
+    else:
+        print(f"Karşılaştırma metni kaynağı: {comparison_response.payload['text_source']}")
+        print(f"Karşılaştırma: {comparison_response.payload['comparison_text']}")
+        print(f"Sıcaklık farkı (A-B): {comparison_response.payload['temperature_diff_c']}°C")
+        print(f"Judge skoru: {comparison_response.payload['judge_score']} / 5.0")
+        print(f"Genel güven: {comparison_response.confidence_score:.2f}")
+        print(">>> MC-Agent, Master Agent üzerinden çağrıldı, aynı DI-Agent")
+        print(">>> (ve aynı Redis devre kesici state'i) paylaşıldı - RI-Agent'taki")
+        print(">>> AYNI dependency-injection deseni.")

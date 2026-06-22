@@ -124,6 +124,33 @@ class AdvisoryResponse(BaseModel):
     note: Optional[str] = None
 
 
+class MicroclimateRequest(BaseModel):
+    """
+    POST /microclimate için gövde (body) şeması. RouteRequest ile AYNI
+    desen (origin/destination yerine point_a/point_b) - MC-Agent (Gün
+    6'da eklendi, esnek 3'ün sonuncusu) için.
+    """
+    point_a: str
+    point_b: str
+
+
+class MicroclimateResponse(BaseModel):
+    """
+    POST /microclimate için yanıt şeması. RouteResponse ile AYNI desen -
+    MC-Agent'ın AgentResponse.payload'ı AÇIK bir şema olarak tanımlanıyor.
+    """
+    point_a: str
+    point_b: str
+    comparison_text: str
+    text_source: str
+    temperature_diff_c: float
+    storm_risk: str
+    judge_score: float
+    judge_passed: bool
+    judge_reason: str
+    confidence_score: float
+
+
 # ----------------------------------------------------------------------
 # ENDPOINT'LER
 # ----------------------------------------------------------------------
@@ -259,6 +286,62 @@ def get_advisory(request: AdvisoryRequest) -> AdvisoryResponse:
         based_on_source=payload["based_on_source"],
         based_on_confidence=payload["based_on_confidence"],
         note=advisory_response.error_message,
+    )
+
+
+@app.post("/microclimate", response_model=MicroclimateResponse)
+def get_microclimate(request: MicroclimateRequest) -> MicroclimateResponse:
+    """
+    ESNEK AJAN ENDPOINT'İ (Gün 6'da eklendi - esnek 3'ün SONUNCUSU):
+    MC-Agent üzerinden, iki nokta arasındaki mikro-iklim farkını
+    hesaplar ve bu farkı doğal dilde özetleyen bir yorumu LLM-as-judge
+    ile değerlendirir.
+
+    Akış (agent_master.py'deki process_microclimate_request ile birebir
+    aynı, /route endpoint'iyle AYNI desen):
+      1. point_a ve point_b için koordinat çözümü (Living Weather'ın
+         KNOWN_LOCATIONS tablosu üzerinden - bu sadece bu endpoint'in
+         KOLAYLIK katmanı, MC-Agent'ın kendisi serbest koordinat alır)
+      2. MC-Agent: her iki nokta için DI-Agent çağrısı (aynı paylaşılan
+         devre kesici state'i kullanılır)
+      3. Sayısal fark hesabı (sıcaklık, fırtına riski notu - kural
+         tabanlı, LLM gerekmiyor)
+      4. Karşılaştırma metni üretimi (LLM dene, başarısız olursa kural
+         tabanlı fallback - bkz. agent_mc_agent.py docstring'i)
+      5. Üretilen metnin LLM-as-judge ile değerlendirilmesi
+
+    NOT: GEMINI_API_KEY tanımlı değilse veya erişilemezse, sistem
+    ÇÖKMEZ - "rule-based-fallback" metne düşer, judge nötr skip eder
+    (RI-Agent ile AYNI Zarif Bozunma deseni).
+    """
+    point_a_coords, point_b_coords, comparison_response = master_agent.process_microclimate_request(
+        request.point_a, request.point_b
+    )
+
+    if comparison_response is None:
+        # point_a veya point_b tanınmadı - /route endpoint'indeki 404
+        # mantığıyla AYNI yaklaşım.
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Konumlardan biri tanınmadı: point_a='{request.point_a}', "
+                f"point_b='{request.point_b}'. Şu an bilinen şehirler: "
+                f"izmir, istanbul, ankara, antalya, bodrum."
+            ),
+        )
+
+    payload = comparison_response.payload
+    return MicroclimateResponse(
+        point_a=payload["point_a"],
+        point_b=payload["point_b"],
+        comparison_text=payload["comparison_text"],
+        text_source=payload["text_source"],
+        temperature_diff_c=payload["temperature_diff_c"],
+        storm_risk=payload["storm_risk"],
+        judge_score=payload["judge_score"],
+        judge_passed=payload["judge_passed"],
+        judge_reason=payload["judge_reason"],
+        confidence_score=comparison_response.confidence_score,
     )
 
 

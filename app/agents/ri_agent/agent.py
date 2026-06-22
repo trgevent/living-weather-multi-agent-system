@@ -85,11 +85,18 @@ from app.agents.di_agent.agent import DIAgent
 
 # RI-Agent'ın kalite kontrolünde kullandığı rubrik - whitepaper'ın
 # evaluation_engine.py'deki ÖRNEK rubrikle aynı fikir, biraz genişletildi.
+#
+# DÜZELTME (21 Haziran 2026, task_description düzeltmesiyle birlikte):
+# Son cümleye "hava açıksa bunu doğru bir tespit olarak say" notu
+# eklendi - judge'ın "kötü hava koşulu YOK" durumunu bir EKSİKLİK gibi
+# değerlendirmesini önlemek için (bkz. agent.py'deki task_description
+# düzeltmesinin gerekçesi).
 ROUTE_TEXT_RUBRIC = (
     "Öneri, varsa kötü hava koşullarını (yağmur, fırtına, aşırı sıcak/soğuk, "
-    "şiddetli rüzgar) açıkça belirtiyor mu? Başlangıç VE bitiş noktasının "
-    "her ikisi de metinde geçiyor mu? Net ve eyleme geçirilebilir mi "
-    "(örn. 'yağmurluk al', 'erken çık' gibi somut bir tavsiye var mı)?"
+    "şiddetli rüzgar) açıkça belirtiyor mu? Hava açık/normalse, bunun doğru "
+    "bir tespit olduğunu say (bu bir eksiklik DEĞİL). Başlangıç VE bitiş "
+    "noktasının her ikisi de metinde geçiyor mu? Net ve eyleme geçirilebilir "
+    "mi (örn. 'yağmurluk al', 'güneş gözlüğü al' gibi somut bir tavsiye var mı)?"
 )
 
 
@@ -134,10 +141,25 @@ class RIAgent:
         # (evaluate_with_llm_judge'ın KENDİSİ, GEMINI_API_KEY yoksa
         # zaten nötr "skip" sonucu döndürüyor - burada ek bir try/except
         # gerekmiyor, fonksiyon zaten FAIL-SAFE tasarlanmış.)
+        #
+        # DÜZELTME (Notebook'ta Kaggle Secrets ile gerçek Gemini'ye karşı
+        # çalıştırılırken bulundu, 21 Haziran 2026): task_description
+        # eskiden "...hava durumu UYARISI İÇEREN bir rota önerisi yaz"
+        # diyordu - bu, judge'a "görev tanımı UYARI ZORUNLU" sinyali
+        # veriyordu. Hava GERÇEKTEN açık/temiz olduğunda (uyarı vermeye
+        # gerek olmayan, DOĞRU bir durumda), judge metni "görev tanımına
+        # uymadı" diye 1.0/5.0 ile reddetti - HALBUKİ metin zaten somut
+        # tavsiyeler içeriyordu (güneş gözlüğü, su). Sorun rubric'te değil
+        # (rubric zaten "VARSA kötü hava koşullarını belirt" diyordu),
+        # task_description'da kendi içinde çelişkiliydi. task_description
+        # artık rubric'le AYNI nötr ifadeyi kullanıyor - "varsa uyarı ver,
+        # yoksa somut tavsiye ver" - judge'a sahte bir zorunluluk dayatmıyor.
         judge_result = evaluate_with_llm_judge(
             task_description=(
-                f"{origin}'dan {destination}'a giderken hava durumu uyarısı "
-                f"içeren bir rota önerisi yaz."
+                f"{origin}'dan {destination}'a giderken hava durumuna dayalı "
+                f"bir rota önerisi yaz. Kötü hava koşulları varsa bunları "
+                f"açıkça belirt; hava açık/normalse bunu söyle ve yine de "
+                f"somut bir tavsiye ver."
             ),
             agent_output=route_text,
             rubric=ROUTE_TEXT_RUBRIC,
@@ -205,6 +227,18 @@ class RIAgent:
         )
 
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+
+        # NOT (21 Haziran 2026 eklendi): Gemini ücretsiz katmanının
+        # DAKİKALIK (15 RPM) ve GÜNLÜK (20/gün) kota sınırları var.
+        # Kaggle Notebook'ta RI-Agent + MC-Agent toplam 4 gerçek Gemini
+        # çağrısı yapıyor (her ajan 2 kez: normal + bozuk-key testi).
+        # "Save & Run All" bu çağrıları milisaniyeler içinde art arda
+        # tetikleyebiliyor - dakikalık sınıra çarpma riskini azaltmak
+        # için her çağrıdan sonra kısa bir bekleme ekleniyor. Bu, GÜNLÜK
+        # kota sorununu ÇÖZMEZ (o ayrı bir kısıt, bkz. CHAPTER_NOTES.md)
+        # ama DAKİKALIK sınıra çarpma riskini düşürür.
+        time.sleep(4.5)
+
         text = (response.text or "").strip()
         if not text:
             raise ValueError("Gemini boş bir cevap döndürdü")
